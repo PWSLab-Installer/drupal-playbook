@@ -1,0 +1,313 @@
+- hosts: localhost
+  connection: local
+  vars:
+    composer_path: /usr/bin/composer
+    php_version: "7.3"
+    php_enable_webserver: false
+    php_enablerepo: "remi,remi-php73"
+    php_enable_php_fpm: true
+    php_fpm_listen: "127.0.0.1:9000"
+
+    apache_mods_enabled:
+        - expires.load
+        - ssl.load
+        - rewrite.load
+        - proxy.load
+        - proxy_fcgi.load
+    apache_remove_default_vhost: true
+    apache_vhosts:
+        -   servername: "{{ drupal_domain }}"
+            serveralias: "www.{{ drupal_domain }}"
+            documentroot: "{{ drupal_core_path }}"
+            extra_parameters: |
+                <FilesMatch \.php$>
+                    SetHandler "proxy:fcgi://{{ php_fpm_listen }}"
+                </FilesMatch>
+    drupal_install_site: false
+    drupal_build_composer_project: true
+    drupal_composer_install_dir: "/var/www/drupal"
+    drupal_core_path: "{{ drupal_composer_install_dir }}/web"
+    drupal_domain: "localhost"
+    drupal_db_name: drupal
+    drupal_db_user: drupal
+    drupal_db_password: drupal
+    mysql_python_package_debian: python3-mysqldb
+    mysql_enablerepo: "remi"
+    # mysql_databases:
+    #     -   name: "{{ drupal_db_name }}"
+    #         encoding: utf8mb4
+    #         collation: utf8mb4_general_ci
+    # mysql_users:
+    #     -   name: "{{ drupal_db_user }}"
+    #         host: "%"
+    #         password: "{{ drupal_db_password }}"
+    #         priv: "{{ drupal_db_name }}.*:ALL"
+
+  environment:
+    COMPOSER_MEMORY_LIMIT: '-1'
+
+  tasks:
+
+    -   name: Check the version of Release
+        command: hostnamectl
+        register: os_check
+        ignore_errors: yes
+
+    -   name: Update apt cache.
+        apt: update_cache=yes cache_valid_time=600
+        when: ansible_os_family == 'Debian'
+
+    -   name: Install dependencies.
+        package:
+            name:
+                - curl
+                - unzip
+                - sendmail
+      
+    -   name: Install Role Apache
+        local_action: command ansible-galaxy install -f geerlingguy.apache 
+
+    -   name: Install Role MYSQL
+        local_action: command ansible-galaxy install -f geerlingguy.mysql
+
+    -   name: Install Role PHP
+        local_action: command ansible-galaxy install -f geerlingguy.php
+
+    -   name: Install Role REMI
+        local_action: command ansible-galaxy install -f geerlingguy.repo-remi 
+
+    -   name: Install Role PHP-VERSIONS
+        local_action: command ansible-galaxy install -f geerlingguy.php-versions
+
+    -   name: Install Role php-mysql
+        local_action: command ansible-galaxy install -f geerlingguy.php-mysql
+        
+    -   name: Install Role composer
+        local_action: command ansible-galaxy install -f geerlingguy.composer
+        
+    -   name: Install Role drush
+        local_action: command ansible-galaxy install -f geerlingguy.drush
+        
+    -   name: Install Role drupal
+        local_action: command ansible-galaxy install -f geerlingguy.drupal
+
+    -   name: Check if Apache is already installed
+        stat: path=/usr/sbin/httpd
+        register: apache_exists
+
+    -   name: Check if PHP is already installed
+        stat: path=/usr/bin/php
+        register: php_exists
+
+    -   name: Check if MYSQL is already installed
+        stat: path=/usr/bin/mysql
+        register: mysql_exists
+
+    -   name: Applying role Apache
+        command: mv ~/.ansible/roles/geerlingguy.apache ~/.ansible/roles/pwslab.apache
+        when: not apache_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Applying role PHP
+        command: mv ~/.ansible/roles/geerlingguy.php ~/.ansible/roles/pwslab.php
+        when: not php_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Applying role REMI
+        command: mv ~/.ansible/roles/geerlingguy.repo-remi  ~/.ansible/roles/pwslab.repo-remi 
+        when: not php_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Applying role PHP-Versions
+        command: mv ~/.ansible/roles/geerlingguy.php-versions ~/.ansible/roles/pwslab.php-versions
+        when: not php_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Applying role MYSQL
+        command: mv ~/.ansible/roles/geerlingguy.mysql ~/.ansible/roles/pwslab.mysql
+        when: not mysql_exists.stat.exists
+        ignore_errors: yes
+
+
+    -   name: Applying role php-mysql
+        command: mv ~/.ansible/roles/geerlingguy.php-mysql ~/.ansible/roles/pwslab.php-mysql
+        when: not mysql_exists.stat.exists
+        ignore_errors: yes
+
+    -   name: Applying role composer
+        command: mv ~/.ansible/roles/geerlingguy.composer ~/.ansible/roles/pwslab.composer
+        ignore_errors: yes
+
+    -   name: Applying role drush
+        command: mv ~/.ansible/roles/geerlingguy.drush ~/.ansible/roles/pwslab.drush
+        ignore_errors: yes
+
+    -   name: Applying role drupal
+        command: mv ~/.ansible/roles/geerlingguy.drupal ~/.ansible/roles/pwslab.drupal
+        ignore_errors: yes
+
+    -   name: Applying replacement on CentOS
+        lineinfile:
+            dest: ~/.ansible/roles/pwslab.php/vars/Debian.yml
+            regexp: '^__php_webserver_daemon: '
+            line: '__php_webserver_daemon: "httpd"'
+            state: present
+        when:
+            - os_check.stdout | regex_search("CentOS")
+    
+    -   name: Applying replacement on Ubuntu
+        lineinfile:
+            dest: ~/.ansible/roles/pwslab.php/vars/Debian.yml
+            regexp: '^__php_webserver_daemon: '
+            line: '__php_webserver_daemon: "apache2"'
+            state: present
+        when:
+            - os_check.stdout | regex_search("Ubuntu")
+
+    -   name: Applying replacement
+        lineinfile:
+            dest: /root/.ansible/roles/pwslab.php-mysql/meta/main.yml
+            regexp: '^(.*)geerlingguy.php(.*)$'
+            line: '  - pwslab.php'
+            state: present
+
+    -   name: Installing Apache
+        include_role:
+            name: pwslab.apache
+        when: not apache_exists.stat.exists
+
+    -   name: Installing Remi
+        include_role:
+            name: pwslab.repo-remi 
+        when: os_check.stdout | regex_search("CentOS")
+    
+    -   name: Installing MYSQL
+        include_role:
+            name: pwslab.mysql
+        when: 
+            - not mysql_exists.stat.exists
+            - not os_check.stdout | regex_search("CentOS Linux 7")
+
+
+    -   name: Installing PHP-Versions
+        include_role:
+            name: pwslab.php-versions
+        when: 
+            - not php_exists.stat.exists
+            - not os_check.stdout | regex_search("CentOS Linux release 8")
+    
+    -   name: Installing PHP
+        include_role:
+            name: pwslab.php
+        when: not php_exists.stat.exists
+
+    -   name: Installing php-mysql
+        include_role:
+            name: pwslab.php-mysql
+        when: 
+            - not mysql_exists.stat.exists
+            - not os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Enable Remi PHP Repo - CentOS 7
+        shell: yum-config-manager --enable remi-php73
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Install PDO - CentOS 7
+        yum:
+            name: php-pdo_mysql
+            state: present
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Add MariaDB - CentOS 7
+        lineinfile:
+            path: /etc/yum.repos.d/MariaDB10.repo
+            line: "{{ item }}"
+            create: yes
+        loop:
+            - "[mariadb]"
+            - name = MariaDB
+            - baseurl = http://yum.mariadb.org/10.3/centos7-amd64
+            - gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+            - gpgcheck=1
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+    
+    -   name: CleanUP cache - CentOS 7
+        command: yum clean all
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+    
+    -   name: Initiate Mariadb - CentOS 7
+        yum: 
+            name: "{{ item }}"
+            state: present
+        loop:
+            - MariaDB-server 
+            - MariaDB-client 
+            - MySQL-python
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+    
+    -   name: Start the MYSQL service - CentOS 7
+        service:
+            name: mariadb
+            enabled: yes
+            state: started
+        when: 
+            - os_check.stdout | regex_search("CentOS Linux 7")
+
+    -   name: Creating MYSQL User
+        command: mysql --host=localhost --user=root  -e "CREATE USER 'drupal'@'localhost' IDENTIFIED BY 'drupal';"
+        ignore_errors: yes
+
+    -   name: Creating MYSQL drupal DB
+        command: mysql --host=localhost --user=root  -e "CREATE DATABASE drupal CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        ignore_errors: yes
+
+    -   name: Granting Permissions
+        command: mysql --host=localhost --user=root  -e "GRANT ALL PRIVILEGES ON drupal.* TO 'drupal'@'localhost';"
+        ignore_errors: yes
+
+    -   name: Alter Privs to User Drupal
+        shell: mysql -u root -p'root' -e "ALTER USER drupal@'localhost' IDENTIFIED WITH mysql_native_password BY 'drupal';"
+        when:
+            - os_check.stdout | regex_search("Ubuntu 20")
+    
+    -   name: Installing composer
+        include_role:
+            name: pwslab.composer
+    
+    -   name: Installing drush
+        include_role:
+            name: pwslab.drush
+    
+    -   name: Installing drupal
+        include_role:
+            name: pwslab.drupal
+
+    -   name: Granting Permissions
+        file:
+            path: /var/www/drupal
+            recurse: yes
+            owner: www-data
+            mode: '0777'
+        when:
+            - os_check.stdout | regex_search("Ubuntu") 
+
+    -   name: Granting Permissions
+        file:
+            path: /var/www/drupal
+            recurse: yes
+            owner: apache
+            mode: '0777'
+        when:
+            - os_check.stdout | regex_search("CentOS") 
+
+    -   name: Disable SELinux
+        selinux:
+            state: disabled
+        when:
+            - os_check.stdout | regex_search("CentOS") 
+
